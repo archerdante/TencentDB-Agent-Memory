@@ -149,11 +149,14 @@ else
   PROXY_CONFIG_MOUNT="$CONFIG_FILE"
 fi
 MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
+  --restart unless-stopped \
   --network "$NETWORK" \
   --network-alias proxy \
   --add-host=host.docker.internal:host-gateway \
   -p "${PROXY_PORT}:8096" \
   --mount "type=bind,source=${PROXY_CONFIG_MOUNT},target=/data/config.yaml,readonly" \
+  -e PROXY_DB_PATH=/data/tdai-memory-proxy/proxy.db \
+  -e NODE_OPTIONS=--max-old-space-size=1536 \
   "$PROXY_IMAGE" >/dev/null
 
 wait_healthy "$CONTAINER" 90

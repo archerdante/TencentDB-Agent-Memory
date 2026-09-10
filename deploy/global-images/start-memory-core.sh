@@ -142,6 +142,7 @@ else
   CORE_CONFIG_MOUNT="$CORE_CONFIG_FILE"
 fi
 MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
+  --restart unless-stopped \
   --network "$NETWORK" \
   --network-alias memory-core \
   -p "${MEMORY_CORE_PORT}:8420" \
@@ -151,6 +152,8 @@ MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
   -e TDAI_GATEWAY_HOST=0.0.0.0 \
   -e TDAI_GATEWAY_API_KEY="$MEMORY_CORE_GATEWAY_API_KEY" \
   -e TDAI_DATA_DIR=/data/tdai-memory \
+  -e TDAI_GATEWAY_CONFIG=/data/config/tdai-gateway.yaml \
+  -e NODE_OPTIONS=--max-old-space-size=1536 \
   "$MEMORY_CORE_IMAGE" >/dev/null
 
 wait_healthy "$CONTAINER" 90
