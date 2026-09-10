@@ -131,6 +131,7 @@ costGuard:
 # knowledge 依赖 memory-hub 起来，否则 hook 内部会降级为空块。
 injection:
   enabled: true
+  externalGatewayUrl: "http://127.0.0.1:${PROXY_PORT}"
   injectors:
     - skill
     - knowledge
@@ -141,12 +142,18 @@ redis:
 YAML
 
 info "启动 proxy (image=$PROXY_IMAGE, port=$PROXY_PORT)"
-$DOCKER run -d --name "$CONTAINER" \
+# UGit/MSYS rewrites colon-containing bind arguments unless path conversion is disabled.
+if command -v cygpath >/dev/null 2>&1; then
+  PROXY_CONFIG_MOUNT=$(cygpath -w "$CONFIG_FILE")
+else
+  PROXY_CONFIG_MOUNT="$CONFIG_FILE"
+fi
+MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
   --network "$NETWORK" \
   --network-alias proxy \
   --add-host=host.docker.internal:host-gateway \
   -p "${PROXY_PORT}:8096" \
-  -v "$CONFIG_FILE:/data/config.yaml:ro" \
+  --mount "type=bind,source=${PROXY_CONFIG_MOUNT},target=/data/config.yaml,readonly" \
   "$PROXY_IMAGE" >/dev/null
 
 wait_healthy "$CONTAINER" 90

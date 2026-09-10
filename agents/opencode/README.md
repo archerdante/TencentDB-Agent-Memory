@@ -51,8 +51,9 @@ OpenCode 是 [SST 出品](https://github.com/sst/opencode) 的开源 AI 编码 C
 | 1 | `x-conversation-id` |
 | 2 | `x-session-id` |
 
-OpenCode 客户端本身**不携带** session ID header，proxy 会自动为每条请求生成
-一个稳定 sessionId（基于 request 上下文），行为上等价于"每次会话独立"。
+OpenCode 客户端本身**不携带** session ID header，proxy 会使用 agent profile
+解析出的稳定 sessionKey（由首条用户消息的不可逆摘要派生）作为 sessionId。这样首次请求可以进入交互式绑定流程，
+后续 `question` tool-result 请求仍会命中同一个 session。
 
 如果通过 wrapper / 代理层附加 `x-conversation-id`，proxy 会优先使用。
 
@@ -62,9 +63,9 @@ OpenCode 客户端本身**不携带** session ID header，proxy 会自动为每�
 
 ### 3.1 机制
 
-OpenCode 复用 CB 的 **`ask_followup_question`** function_call 机制发起交互式 Form：
+OpenCode 使用原生 **`question`** function_call 机制发起交互式 Form：
 
-- Tool name: `ask_followup_question`
+- Tool name: `question`
 - Call ID prefix: `call_oc_session_init_`（handler 针对 opencode 使用独立前缀，与 CB `call_session_init_` / dsh `call_dsh_session_init_` 区分）
 - 协议: OpenAI SSE tool_calls chunks
 

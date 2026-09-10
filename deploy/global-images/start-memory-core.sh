@@ -68,7 +68,8 @@ llm:
   baseUrl: "${MEMORY_LLM_BASE_URL:-}"
   apiKey: "${MEMORY_LLM_API_KEY:-}"
   model: "${MEMORY_LLM_MODEL:-}"
-  maxTokens: 32000
+  # 2026-09-10 降耗：32000 → 8192（抽取产出远用不到 32k，只是拉长无效输出）
+  maxTokens: 8192
   timeoutMs: 300000
 
 memory:
@@ -80,17 +81,21 @@ memory:
   extraction:
     enabled: true
     enableDedup: true
-    maxMemoriesPerSession: 20
+    # 2026-09-10 二轮降耗：20 → 10（减少下游 L2 注入素材）
+    maxMemoriesPerSession: 10
   persona:
     triggerEveryN: 50
-    maxScenes: 15
+    # 2026-09-10 二轮降耗：15 → 8（每次注入的场景更少）
+    maxScenes: 8
   pipeline:
-    everyNConversations: 5
+    # 2026-09-10 二轮降耗：5 → 10（L1 已是调用次数最多的路径，实测约 40 次/小时）
+    everyNConversations: 10
     enableWarmup: true
-    l1IdleTimeoutSeconds: 600
+    # 2026-09-10 二轮降耗：600 → 1800（批量抽取摊薄固定 sys prompt 2369 chars）
+    l1IdleTimeoutSeconds: 1800
     l2DelayAfterL1Seconds: 90
-    l2MinIntervalSeconds: 900
-    l2MaxIntervalSeconds: 3600
+    l2MinIntervalSeconds: 7200
+    l2MaxIntervalSeconds: 28800
   recall:
     enabled: true
     maxResults: 5
@@ -106,10 +111,18 @@ skill:
   enabled: true
   routing:
     mode: bm25
-    searchTopK: 20
+    # 2026-09-10 二轮降耗：20 → 10
+    searchTopK: 10
   extraction:
     enabled: true
-    maxIterations: 16
+    # 2026-09-10 降耗：16 → 4（实测有跑满 16 步的 skill 抽取，单次 30+ 次上下文重发）
+    # 2026-09-10 二轮降耗：4 → 2
+    maxIterations: 2
+    # 归档触发阈值抬高一档（默认 10 次 tool_call / 40KB 太容易触发）
+    # 2026-09-10 二轮降耗：50 → 100
+    toolCallThreshold: 100
+    # 2026-09-10 二轮降耗：204800 → 512000
+    archiveBytes: 512000
     queue:
       backend: local
       keyPrefix: tdai
@@ -122,12 +135,18 @@ skill:
 YAML
 
 info "启动 memory-core (image=$MEMORY_CORE_IMAGE, port=$MEMORY_CORE_PORT)"
-$DOCKER run -d --name "$CONTAINER" \
+# UGit/MSYS rewrites colon-containing bind arguments unless path conversion is disabled.
+if command -v cygpath >/dev/null 2>&1; then
+  CORE_CONFIG_MOUNT=$(cygpath -w "$CORE_CONFIG_FILE")
+else
+  CORE_CONFIG_MOUNT="$CORE_CONFIG_FILE"
+fi
+MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
   --network "$NETWORK" \
   --network-alias memory-core \
   -p "${MEMORY_CORE_PORT}:8420" \
   -v "${MEMORY_CORE_VOLUME}:/data/tdai-memory" \
-  -v "$CORE_CONFIG_FILE:/data/config/tdai-gateway.yaml:ro" \
+  --mount "type=bind,source=${CORE_CONFIG_MOUNT},target=/data/config/tdai-gateway.yaml,readonly" \
   -e TDAI_GATEWAY_PORT=8420 \
   -e TDAI_GATEWAY_HOST=0.0.0.0 \
   -e TDAI_GATEWAY_API_KEY="$MEMORY_CORE_GATEWAY_API_KEY" \

@@ -659,9 +659,22 @@ export async function handleChatCompletions(
   }
 
   // ── Session key: prefer conversation header, fallback to agent profile ───────────
-  const { resolveConversationId } = await import("./session/session-key.js");
-  const conversationId = resolveConversationId(c);
-  const sessionKey = conversationId ?? resolveSessionKey(config, lcHeaders, c.req.path, body, keyId);
+  const { resolveConversationId, deriveOpenCodeConversationId } = await import("./session/session-key.js");
+  const requestConversationId = resolveConversationId(c);
+  const profileSessionKey = requestConversationId ?? resolveSessionKey(config, lcHeaders, c.req.path, body, keyId);
+  const sessionKey = requestConversationId || agentSource !== "opencode"
+    ? profileSessionKey
+    : deriveOpenCodeConversationId(
+        Array.isArray(body.messages) ? body.messages : [],
+        c.req.path,
+        profileSessionKey,
+      );
+  // OpenCode CLI does not send a conversation/session header.  Unlike the
+  // header-only clients, it can render the native `question` tool form, so use
+  // the same deterministic fallback key for session-init when no header exists.
+  // This makes the first request enter the Team → Agent → Task flow while
+  // preserving the existing explicit-header behavior for every other client.
+  const conversationId = requestConversationId ?? (agentSource === "opencode" ? sessionKey : null);
 
   // ── Auth verification (user_key → user_id) ──────────────────────────────────────
   // Reuse the early verify result — it ran before body parse to decide the

@@ -136,3 +136,10 @@ coverage/
 # Local-only: parity snapshots & runtime configs (never commit)
 MemoryProxy/.archive-tmp/
 z_config/
+
+# 2026-09-10 local-only: prevent accidental commit of secrets & backups
+# .proxy-gpt-config/ is generated at runtime and holds a real upstream API key
+# (.proxy-config/ is already covered above; the gpt variant was not).
+deploy/global-images/.proxy-gpt-config/
+# Timestamped backups: "*.bak" already covers plain .bak, not .bak-<stamp>
+*.bak-*
