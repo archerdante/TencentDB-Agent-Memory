@@ -97,6 +97,13 @@ docker rm -f tmp-core
 - `deploy/global-images/start-memory-core.sh`：降耗调参 + `--restart unless-stopped` /
   `NODE_OPTIONS` / `TDAI_GATEWAY_CONFIG`，使脚本重建出的容器与手工容器一致
 - `deploy/global-images/start-proxy.sh`、`start-memory-hub.sh`：同样补 `--restart unless-stopped`
+- **代理库持久化**：`tdai-proxy` / `tdai-proxy-gpt` 的 sqlite 库原先写在容器可写层
+  （`PROXY_DB_PATH=/data/tdai-memory-proxy/proxy.db`，无卷），**容器一重建就丢会话/任务绑定**。
+  现改挂命名卷 `tdai-proxy-data` / `tdai-proxy-gpt-data`，脚本与 `.env` 的 `PROXY_VOLUME` 均可覆盖。
+  迁移时需先把旧库 `docker cp` 出来 → 建卷 → 以 root 灌入并 `chown app:app`（容器以 `app` 运行，
+  root 灌完不 chown 会因权限写不进去）→ 再重建容器。
+- `start-proxy-gpt.ps1`：镜像由 `:latest` 改为钉住 `0.2.0-opencode-binding`（与运行中容器一致），
+  并补 `NODE_ENV` / `PROXY_DB_PATH` / `NODE_OPTIONS`
 
 ## 八、已知限制
 

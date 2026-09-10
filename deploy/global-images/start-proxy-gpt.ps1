@@ -1,9 +1,35 @@
+<#
+.SYNOPSIS
+    Start the secondary (GPT upstream) proxy container on a separate port.
+
+.DESCRIPTION
+    Renders .proxy-gpt-config/config.yaml from the OPENAI_API_KEY in the DSH
+    credentials file, then (re)creates the container.
+
+    ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 as ANSI unless the
+    file has a UTF-8 BOM, so non-ASCII here would break parsing.
+
+.PARAMETER Image
+    Pinned by default to match the running container. Upstream's :latest would
+    silently move this container onto a different build.
+
+.PARAMETER Volume
+    Named volume holding the proxy sqlite DB (/data/tdai-memory-proxy).
+    Without it the DB lives in the container layer and is lost when the
+    container is recreated.
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File start-proxy-gpt.ps1
+#>
 param(
-  [int]$Port = 8097,
-  [string]$Container = 'tdai-proxy-gpt'
+    [int]$Port = 8097,
+    [string]$Container = 'tdai-proxy-gpt',
+    [string]$Image = 'agentmemory/memory-proxy:0.2.0-opencode-binding',
+    [string]$Volume = 'tdai-proxy-gpt-data'
 )
 
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 $repo = Split-Path -Parent $PSScriptRoot
 $profileCreds = 'C:\Users\jimwpeng\.dsh\.credentials.yaml'
 $configDir = Join-Path $PSScriptRoot '.proxy-gpt-config'
@@ -60,7 +86,7 @@ costGuard:
   enabled: false
 injection:
   enabled: true
-  externalGatewayUrl: "http://127.0.0.1:8097"
+  externalGatewayUrl: "http://127.0.0.1:$Port"
   injectors:
     - skill
     - knowledge
@@ -70,9 +96,22 @@ redis:
 "@
 [IO.File]::WriteAllText($configFile, $config, (New-Object Text.UTF8Encoding($false)))
 
+docker volume create $Volume | Out-Null
+
 docker rm -f $Container 2>$null | Out-Null
-docker run -d --name $Container --restart unless-stopped --network tdai-memory-stack --network-alias proxy-gpt --add-host host.docker.internal:host-gateway -p ("{0}:8096" -f $Port) --mount ("type=bind,source={0},target=/data/config.yaml,readonly" -f $configFile) agentmemory/memory-proxy:latest | Out-Null
+docker run -d --name $Container `
+    --restart unless-stopped `
+    --network tdai-memory-stack `
+    --network-alias proxy-gpt `
+    --add-host host.docker.internal:host-gateway `
+    -p ("{0}:8096" -f $Port) `
+    --mount ("type=bind,source={0},target=/data/config.yaml,readonly" -f $configFile) `
+    -v ("{0}:/data/tdai-memory-proxy" -f $Volume) `
+    -e NODE_ENV=production `
+    -e PROXY_DB_PATH=/data/tdai-memory-proxy/proxy.db `
+    -e NODE_OPTIONS=--max-old-space-size=1536 `
+    $Image | Out-Null
 Start-Sleep -Seconds 8
 $status = docker inspect $Container --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}'
-Write-Host "GPT Proxy $Container $status on http://127.0.0.1:$Port"
+Write-Host "GPT Proxy $Container $status on http://127.0.0.1:$Port (image=$Image, volume=$Volume)"
 if ($status -notmatch 'running\|healthy') { docker logs --tail 80 $Container; throw 'GPT Proxy did not become healthy' }

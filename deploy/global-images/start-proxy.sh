@@ -26,6 +26,9 @@ MEMORY_CORE_GATEWAY_API_KEY="${MEMORY_CORE_GATEWAY_API_KEY:-local}"
 
 CONTAINER=tdai-proxy
 NETWORK=tdai-memory-stack
+# 2026-09-10 持久化：proxy 的 sqlite 库原先落在容器可写层，容器一重建就丢会话/任务绑定。
+# 现挂命名卷；卷名可用 .env 的 PROXY_VOLUME 覆盖。
+PROXY_VOLUME="${PROXY_VOLUME:-tdai-proxy-data}"
 
 if ! $DOCKER network inspect "$NETWORK" >/dev/null 2>&1; then
   info "创建 docker 网络 $NETWORK"
@@ -155,6 +158,7 @@ MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
   --add-host=host.docker.internal:host-gateway \
   -p "${PROXY_PORT}:8096" \
   --mount "type=bind,source=${PROXY_CONFIG_MOUNT},target=/data/config.yaml,readonly" \
+  -v "${PROXY_VOLUME}:/data/tdai-memory-proxy" \
   -e PROXY_DB_PATH=/data/tdai-memory-proxy/proxy.db \
   -e NODE_OPTIONS=--max-old-space-size=1536 \
   "$PROXY_IMAGE" >/dev/null
