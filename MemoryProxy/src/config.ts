@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { load as yamlLoad } from "js-yaml";
-import type { CostGuardConfig, ProxyConfig, RawYamlConfig } from "./types.js";
+import type { CodexOAuthConfig, CostGuardConfig, ProxyConfig, RawYamlConfig } from "./types.js";
 
 const DEFAULT_UPSTREAM = "https://llm-upstream.example.com/v2/chat/completions";
 
@@ -260,6 +260,48 @@ function parseUpstreamAgents(
 }
 
 /**
+ * Codex（ChatGPT 订阅）OAuth 上游的默认值。
+ *
+ * `clientId` / `tokenUrl` 与 Codex 客户端的登录流程一致 —— 只有用同一个公开客户端
+ * id 刷新，签出来的 access token 才会被 chatgpt.com 的 Codex 后端接受。
+ */
+const CODEX_OAUTH_DEFAULTS = {
+  authFile: "/data/codex-auth.json",
+  clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+  tokenUrl: "https://auth.openai.com/oauth/token",
+  refreshSkewSeconds: 300,
+  originator: "codex_cli_rs",
+} as const;
+
+/**
+ * 解析 `upstream.codexOAuth`。未开启时返回 undefined —— 这样「没配」与「配置了但
+ * 关闭」都保持既有转发路径，不会让升级本身改变任何现有容器的行为。
+ */
+function parseCodexOAuth(
+  raw?: {
+    enabled?: boolean;
+    authFile?: string;
+    clientId?: string;
+    tokenUrl?: string;
+    refreshSkewSeconds?: number;
+    originator?: string;
+  },
+): CodexOAuthConfig | undefined {
+  if (!raw?.enabled) return undefined;
+  return {
+    enabled: true,
+    authFile: raw.authFile || CODEX_OAUTH_DEFAULTS.authFile,
+    clientId: raw.clientId || CODEX_OAUTH_DEFAULTS.clientId,
+    tokenUrl: raw.tokenUrl || CODEX_OAUTH_DEFAULTS.tokenUrl,
+    refreshSkewSeconds:
+      typeof raw.refreshSkewSeconds === "number" && Number.isFinite(raw.refreshSkewSeconds)
+        ? raw.refreshSkewSeconds
+        : CODEX_OAUTH_DEFAULTS.refreshSkewSeconds,
+    originator: raw.originator || CODEX_OAUTH_DEFAULTS.originator,
+  };
+}
+
+/**
  * Build the final ProxyConfig.
  * Priority (high → low): CLI overrides > YAML config file > defaults.
  */
@@ -282,6 +324,7 @@ export function buildConfig(overrides: CliOverrides = {}): ProxyConfig {
         DEFAULT_CONFIG.upstream.url,
       apiKey: yaml.upstream?.apiKey ?? DEFAULT_CONFIG.upstream.apiKey,
       agents: parseUpstreamAgents(yaml.upstream?.agents),
+      codexOAuth: parseCodexOAuth(yaml.upstream?.codexOAuth),
     },
     log: {
       file: overrides.logFile ?? yaml.log?.file ?? DEFAULT_CONFIG.log.file,

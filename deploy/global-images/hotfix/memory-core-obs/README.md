@@ -104,6 +104,25 @@ docker rm -f tmp-core
   root 灌完不 chown 会因权限写不进去）→ 再重建容器。
 - `start-proxy-gpt.ps1`：镜像由 `:latest` 改为钉住 `0.2.0-opencode-binding`（与运行中容器一致），
   并补 `NODE_ENV` / `PROXY_DB_PATH` / `NODE_OPTIONS`
+- **tdai-proxy-gpt 上游切到 OpenCode Zen Go（2026-09-11）**：`.proxy-gpt-config/config.yaml` 的
+  `upstream.url` 由 `https://gptcodex.top/v1` 改为 `https://opencode.ai/zen/go/v1`，凭据由
+  `OPENAI_API_KEY` 改为 `OPENCODE_GO_API_KEY`（`start-proxy-gpt.ps1` 同步，脚本保持纯 ASCII——
+  Windows PowerShell 5.1 无 BOM 时按 ANSI 读，中文注释会让它解析失败）。
+  两个连带约束：① Zen 只认自己的模型 id（`gpt-5.6-sol/terra` 在 Zen 上不存在）；
+  ② Zen 强制要求 `x-opencode-session` 头，缺失即 `400 MissingSessionID`，而 DSH 的 pi-ai 不发这个头，
+  因此镜像改为本地构建 `agentmemory/memory-proxy:0.2.0-opencode-binding-zensession`，在
+  `MemoryProxy/src/handler.ts` 的 `buildUpstreamHeaders()` 里当上游 host 是 `opencode.ai` 且
+  客户端没带该头时，用 proxy 已解析的 `sessionKey` 兜底注入（`PROXY_OPENCODE_SESSION_FALLBACK=0` 关闭）。
+  **模型选择有坑**：`/zen/go/v1/models` 列出的 id 并非都能用——实测 `gpt-5.6-luna` 直连 Zen 也返回
+  500（不是代理问题），`kimi-k2.5`/`glm-5`/`qwen3.5-plus`/`mimo-v2-pro`/`hy3-preview`/`grok-4.5` 报
+  "Model is unavailable"，`grok-4.6`/`muse-spark-*` 报格式或地区不可用。订阅内实测 200 的有
+  `deepseek-v4.1-flash`、`deepseek-v4-pro`、`deepseek-v4-flash`、`kimi-k3`、`glm-5.3`、
+  `qwen3.8-max`、`minimax-m3` 等，故 DSH 侧统一用 `deepseek-v4.1-flash`
+  （验证过 tools 与 `reasoning_effort` 都接受）。
+  构建机注意：`registry-1.docker.io` 不可达 → Dockerfile 去掉 `# syntax` 前端与 cache mount、
+  基础镜像参数化为可达镜像站（`NODE_BASE`）；deb 源换 `mirrors.aliyun.com`
+  （腾讯源 302 到 https，而 node:22-slim 没有 ca-certificates）；HEALTHCHECK 由 curl 改为 node 内联；
+  导出用 `--output type=docker,name=...`。
 
 ## 八、已知限制
 

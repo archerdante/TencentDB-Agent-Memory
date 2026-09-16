@@ -35,6 +35,11 @@ upstream:
   # 若非空，则替换所有转发请求中的 Authorization: Bearer <apiKey>。
   # 留空则透传客户端原始 API Key。
   apiKey: "<YOUR_TOKENHUB_API_KEY>"
+  # OpenCode Zen Go（url 指向 https://opencode.ai/zen/go/v1）强制要求每个请求带
+  # x-opencode-session 头，缺失即 400 MissingSessionID。只发 Authorization 的客户端
+  # （DSH 的 pi-ai provider、普通 OpenAI SDK）不会带这个头，因此当上游 host 是
+  # opencode.ai 且客户端没带该头时，proxy 会用自己已解析出的 sessionKey 兜底注入。
+  # 设 PROXY_OPENCODE_SESSION_FALLBACK=0 可关闭该兜底。
 
   # ── Per-Agent 覆盖 ─────────────────────────────────────────────────────────
   # 按 agent 名（URL 路径前缀 /{agent}/...）覆盖 url + apiKey。

@@ -3,7 +3,7 @@
     Start the secondary (GPT upstream) proxy container on a separate port.
 
 .DESCRIPTION
-    Renders .proxy-gpt-config/config.yaml from the OPENAI_API_KEY in the DSH
+    Renders .proxy-gpt-config/config.yaml from the OPENCODE_GO_API_KEY in the DSH
     credentials file, then (re)creates the container.
 
     ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 as ANSI unless the
@@ -11,7 +11,9 @@
 
 .PARAMETER Image
     Pinned by default to match the running container. Upstream's :latest would
-    silently move this container onto a different build.
+    silently move this container onto a different build. The -zensession tag is
+    the local build that injects the x-opencode-session fallback Zen requires
+    (see MemoryProxy/src/handler.ts: buildUpstreamHeaders).
 
 .PARAMETER Volume
     Named volume holding the proxy sqlite DB (/data/tdai-memory-proxy).
@@ -24,7 +26,7 @@
 param(
     [int]$Port = 8097,
     [string]$Container = 'tdai-proxy-gpt',
-    [string]$Image = 'agentmemory/memory-proxy:0.2.0-opencode-binding',
+    [string]$Image = 'agentmemory/memory-proxy:0.2.0-opencode-binding-zensession',
     [string]$Volume = 'tdai-proxy-gpt-data'
 )
 
@@ -36,10 +38,13 @@ $configDir = Join-Path $PSScriptRoot '.proxy-gpt-config'
 $configFile = Join-Path $configDir 'config.yaml'
 
 if (-not (Test-Path $profileCreds)) { throw "Missing DSH credentials: $profileCreds" }
-$credentialLine = Get-Content -LiteralPath $profileCreds | Where-Object { $_ -match '^\s*OPENAI_API_KEY:\s*' } | Select-Object -First 1
-if (-not $credentialLine) { throw 'OPENAI_API_KEY is missing from DSH credentials' }
-$apiKey = ($credentialLine -replace '^\s*OPENAI_API_KEY:\s*', '').Trim()
-if ($apiKey.Length -lt 10) { throw 'OPENAI_API_KEY is invalid' }
+# 2026-09-11: upstream switched from gptcodex.top to OpenCode Zen Go; the credential
+# moved from OPENAI_API_KEY to OPENCODE_GO_API_KEY (same DSH credentials file).
+# NOTE: keep this file ASCII-only - Windows PowerShell 5.1 reads .ps1 as ANSI without a BOM.
+$credentialLine = Get-Content -LiteralPath $profileCreds | Where-Object { $_ -match '^\s*OPENCODE_GO_API_KEY:\s*(\S+)' } | Select-Object -First 1
+if (-not $credentialLine) { throw 'OPENCODE_GO_API_KEY is missing from DSH credentials' }
+$apiKey = ([regex]::Match($credentialLine, '^\s*OPENCODE_GO_API_KEY:\s*(\S+)')).Groups[1].Value.Trim()
+if ($apiKey.Length -lt 10) { throw 'OPENCODE_GO_API_KEY is invalid' }
 
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 $config = @"
@@ -48,7 +53,9 @@ server:
   port: 8096
   forwardTimeoutMs: 600000
 upstream:
-  url: "https://gptcodex.top/v1"
+  # OpenCode Zen Go subscription route. Zen requires the x-opencode-session header and
+  # accepts only Zen model ids (deepseek-v4.1-flash / gpt-5.6-luna / glm-5.3 / ...).
+  url: "https://opencode.ai/zen/go/v1"
   apiKey: "$apiKey"
 log:
   file: ""

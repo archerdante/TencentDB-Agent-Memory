@@ -22,7 +22,7 @@ fi
 MEMORY_CORE_VOLUME="${MEMORY_CORE_VOLUME:-tdai-memory-core-data}"
 PANEL_VOLUME="${PANEL_VOLUME:-tdai-panel-data}"
 
-for c in tdai-proxy tdai-memory-hub tdai-memory-core; do
+for c in tdai-proxy tdai-proxy-gpt tdai-memory-hub tdai-memory-core tdai-zen-llm; do
   if $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
     info "停止并移除 $c"
     $DOCKER rm -f "$c" >/dev/null
@@ -55,6 +55,11 @@ if (( PURGE == 1 )); then
   CORE_CFG_DIR="${MEMORY_CORE_CONFIG_DIR:-$SCRIPT_DIR/.memory-core-config}"
   if [[ -d "$CORE_CFG_DIR" ]]; then
     rm -rf "$CORE_CFG_DIR" && ok "已删除 memory-core config 目录 $CORE_CFG_DIR"
+  fi
+  # Zen 转发配置里带着上游 key，purge 时一并清掉（下次 start-zen-llm.sh 重新生成）
+  ZEN_CFG_DIR="${ZEN_LLM_CONFIG_DIR:-$SCRIPT_DIR/.zen-llm-config}"
+  if [[ -d "$ZEN_CFG_DIR" ]]; then
+    rm -rf "$ZEN_CFG_DIR" && ok "已删除 zen 转发 config 目录 $ZEN_CFG_DIR"
   fi
 fi
 

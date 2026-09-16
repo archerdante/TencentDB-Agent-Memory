@@ -251,6 +251,27 @@ function buildUpstreamBody(
 }
 
 /**
+ * OpenCode Zen Go (`https://opencode.ai/zen/go/v1`) rejects any request that
+ * does not carry an `x-opencode-session` header with `400 MissingSessionID`:
+ * the gateway uses that id to pin a conversation onto the same upstream
+ * account. Header-only clients (DSH's pi-ai providers, plain OpenAI SDKs)
+ * never send it, so requests forwarded through this proxy to Zen would always
+ * fail. Inject the proxy's own resolved session key as the value — a client
+ * that does send the header (opencode CLI, DSH's opencode-go route) keeps its
+ * own value, because this only fills the gap.
+ *
+ * Set PROXY_OPENCODE_SESSION_FALLBACK=0 to disable.
+ */
+function isOpenCodeUpstream(url: string): boolean {
+  return /^https?:\/\/([a-z0-9-]+\.)*opencode\.ai\//i.test(url);
+}
+
+function opencodeSessionFallbackEnabled(): boolean {
+  const raw = (process.env.PROXY_OPENCODE_SESSION_FALLBACK ?? "1").trim().toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "off";
+}
+
+/**
  * Build upstream headers from request headers + routing auth overrides.
  * If config.upstream.apiKey is set, it overrides the request's Authorization header
  * only for the default route (not alternate model route).
@@ -286,6 +307,13 @@ function buildUpstreamHeaders(
 
   if (sessionKey) {
     headers["x-vertex-ai-session-id"] = sessionKey;
+  }
+
+  if (isOpenCodeUpstream(target.url) && opencodeSessionFallbackEnabled()) {
+    const existing = Object.keys(headers).find(k => k.toLowerCase() === "x-opencode-session");
+    if (!existing) {
+      headers["x-opencode-session"] = sessionKey || "memoryhub-shared";
+    }
   }
   return headers;
 }

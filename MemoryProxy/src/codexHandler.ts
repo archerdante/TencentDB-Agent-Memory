@@ -54,6 +54,7 @@ import { trackWrite, withL0Retry } from "./tdai/pending-writes.js";
 import type { TdaiIdentity, TdaiMessage } from "./tdai/types.js";
 import { triggerSkillExtractIfReady } from "./skill/handler-glue.js";
 import { isExtractionAllowed, logExtractionSkipped } from "./extraction-gate.js";
+import { getCodexAuth } from "./codex-oauth.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -161,17 +162,68 @@ export function classifyCodexRequest(
 // ── Session ID extraction (exported for unit tests) ──────────────────────────
 
 /**
+ * Header names carrying the same "conversation id" concept, in priority order.
+ *
+ * `session-id` is what the Codex CLI itself sends. The others are the identical
+ * notion under other Responses clients:
+ *   - `x-deepseek-harness-session-id` — DSH (deepseek-harness) stamps this on
+ *     every provider request; the sibling `/dsh/*` route already reads it via
+ *     `session/resolveConversationId()`.
+ *   - `x-client-request-id` / `session_id` / `x-session-id` — pi-ai's Responses
+ *     client sets these itself (`sessionAffinityFormat` decides which).
+ *   - `x-conversation-id` — the generic MemoryProxy convention.
+ *
+ * 2026-09-15: before this list existed only `session-id` was recognized, so a
+ * DSH → `/codex/*` request always resolved `sessionId=null`, and the
+ * `if (config.sessionInit?.enabled && sessionId)` gate below silently skipped
+ * session-init, asset injection AND L0 recording — i.e. "MemoryHub 没通"
+ * although the model call itself succeeded.
+ */
+const CODEX_SESSION_ID_HEADERS = [
+  "session-id",
+  "x-deepseek-harness-session-id",
+  "x-client-request-id",
+  "session_id",
+  "x-session-id",
+  "x-conversation-id",
+] as const;
+
+/**
+ * Extract session_id from a codex request, reporting which signal matched so
+ * the route can log it (that log is the fastest way to verify a new client).
+ */
+export function extractCodexSessionIdWithSource(
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+): { sessionId: string | null; source: string | null } {
+  for (const name of CODEX_SESSION_ID_HEADERS) {
+    const raw = headers[name];
+    if (typeof raw !== "string") continue;
+    const value = raw.trim();
+    if (value.length === 0 || value.length > 128) continue;
+    return { sessionId: value, source: `header:${name}` };
+  }
+  const meta = body.client_metadata as { session_id?: string } | undefined;
+  if (typeof meta?.session_id === "string") {
+    const value = meta.session_id.trim();
+    if (value.length > 0) {
+      return { sessionId: value, source: "body:client_metadata.session_id" };
+    }
+  }
+  return { sessionId: null, source: null };
+}
+
+/**
  * Extract session_id from codex request.
- * Primary: `session-id` header. Fallback: `body.client_metadata.session_id`.
+ * Primary: `session-id` header (Codex CLI) or any of the equivalent
+ * client-specific headers (see CODEX_SESSION_ID_HEADERS); fallback:
+ * `body.client_metadata.session_id`.
  */
 export function extractCodexSessionId(
   headers: Record<string, string>,
   body: Record<string, unknown>,
 ): string | null {
-  if (headers["session-id"]) return headers["session-id"];
-  const meta = body.client_metadata as { session_id?: string } | undefined;
-  if (typeof meta?.session_id === "string") return meta.session_id;
-  return null;
+  return extractCodexSessionIdWithSource(headers, body).sessionId;
 }
 
 // ── Default mode gate detection (exported for unit tests) ────────────────────
@@ -203,8 +255,9 @@ export function detectDefaultModeGate(input: unknown): boolean {
  * Inject `<tdai_injections>` wrapper into codex body.input[0].content[].
  *
  * Appends the injection block to the developer message (input[0]) content.
- * Defensive: if input[0] is not a message with an array content, returns
- * the body unchanged.
+ * Defensive: if input[0] is not a message-shaped item, returns the body
+ * unchanged. A missing `type` is treated as a message (see below), and a string
+ * `content` is wrapped into a one-item `input_text` array first.
  *
  * Returns a shallow copy — original body is not mutated.
  */
@@ -217,10 +270,21 @@ export function injectCodexAssets(
 
   const devMsg = input[0] as Record<string, unknown> | null;
   if (!devMsg || typeof devMsg !== "object") return body;
-  if (devMsg.type !== "message") return body;
+  // Codex CLI sends `{type:"message", role:"developer", content:[...]}`. Other
+  // Responses clients (DSH via pi-ai) send `{role:"developer", content:"…"}` —
+  // no `type`, string content. Both must inject, otherwise the pipeline burns a
+  // full recall and then drops the result on the floor.
+  if (devMsg.type !== undefined && devMsg.type !== "message") return body;
+  const role = typeof devMsg.role === "string" ? devMsg.role : "";
+  if (!role) return body;
 
-  const content = devMsg.content;
-  if (!Array.isArray(content)) return body;
+  const rawContent = devMsg.content;
+  const content: unknown[] | null = Array.isArray(rawContent)
+    ? rawContent
+    : typeof rawContent === "string"
+      ? [{ type: "input_text", text: rawContent }]
+      : null;
+  if (!content) return body;
 
   const injectionBlock = buildCodexInjectionBlock(assets);
 
@@ -229,6 +293,61 @@ export function injectCodexAssets(
   const newDevMsg = { ...devMsg, content: newContent };
   const newInput = [newDevMsg, ...input.slice(1)];
   return { ...body, input: newInput };
+}
+
+// ── Strict-parameter sanitize (ChatGPT Codex backend) ───────────────────────
+
+/**
+ * Parameters the ChatGPT Codex backend rejects outright with
+ * `400 {"detail":"Unsupported parameter: <name>"}`.
+ *
+ * Established empirically on 2026-09-15 (see settings.yaml 的 plus 段落注释)。
+ * Keep in sync if the backend starts accepting one of them.
+ */
+const CODEX_UNSUPPORTED_PARAMS = [
+  "max_output_tokens",
+  "temperature",
+  "prompt_cache_retention",
+  "prompt_cache_options",
+] as const;
+
+/**
+ * Strip parameters the ChatGPT Codex backend rejects, and normalize a `system`
+ * role to `developer` (the backend takes the system segment as
+ * `instructions` or a `developer` message, not `system`).
+ *
+ * Why it lives here: pi-ai (DSH's Responses client) unconditionally sends
+ * `max_output_tokens` whenever a maxTokens is configured, so without this every
+ * such client needed an external shim in front of the proxy just to be
+ * accepted. Returns a shallow copy; the caller's body is untouched.
+ */
+export function sanitizeCodexUpstreamBody(
+  body: Record<string, unknown>,
+): { body: Record<string, unknown>; stripped: string[] } {
+  const out: Record<string, unknown> = { ...body };
+  const stripped: string[] = [];
+
+  for (const key of CODEX_UNSUPPORTED_PARAMS) {
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      delete out[key];
+      stripped.push(key);
+    }
+  }
+
+  if (Array.isArray(out.input)) {
+    let converted = false;
+    out.input = out.input.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const rec = item as Record<string, unknown>;
+      if (rec.type !== undefined && rec.type !== "message") return item;
+      if (rec.role !== "system") return item;
+      converted = true;
+      return { ...rec, role: "developer" };
+    });
+    if (converted) stripped.push("system->developer");
+  }
+
+  return { body: out, stripped };
 }
 
 // ── Upstream request helpers ─────────────────────────────────────────────────
@@ -345,7 +464,15 @@ export async function handleCodexEndpoint(
   }
 
   // ── 6. Session ID extraction ───────────────────────────────────────────────
-  const sessionId = extractCodexSessionId(headers, body);
+  // 无 session id ⇒ 下面第 7 段的 `if (config.sessionInit?.enabled && sessionId)`
+  // 直接跳过：不 init、不注入、不写 L0。所以这一行必须覆盖客户端所有等价写法
+  // （DSH 的 x-deepseek-harness-session-id、pi-ai 的 x-client-request-id 等）。
+  const { sessionId, source: sessionIdSource } = extractCodexSessionIdWithSource(headers, body);
+  if (sessionId) {
+    pipe.info("CODEX_SESSION", `session-id=${sessionId} (${sessionIdSource})`);
+  } else {
+    pipe.info("CODEX_SESSION", "no session id in request → session-init/injection/L0 all skipped");
+  }
   const sessionKey = sessionId ?? `${keyId}:${traceId}`;
   const agentSource = "codex";
   const isStream = body.stream !== false;
@@ -1094,6 +1221,37 @@ async function forwardToUpstream(
     // else: 保留 c.req.header('authorization') 里的客户端 key 透传
   }
 
+  // Codex（ChatGPT 订阅）上游：凭据由本容器自己持有并刷新，客户端始终只带
+  // MemoryHub 身份（sk-mem-…）。所以这里必须**覆盖**透传进来的 Authorization ——
+  // 那个 key 是 proxy 的鉴权凭据，打在 chatgpt.com 上只会 401。
+  // 显式配置的 per-agent apiKey 仍然优先（保持既有优先级语义不变）。
+  const codexOAuth = config.upstream.codexOAuth;
+  if (codexOAuth && !agentUpstreamEntry?.apiKey) {
+    const auth = await getCodexAuth(codexOAuth);
+    if (auth) {
+      upstreamHeaders["authorization"] = `Bearer ${auth.accessToken}`;
+      if (auth.accountId) upstreamHeaders["chatgpt-account-id"] = auth.accountId;
+    } else {
+      // 拿不到凭据时不要把客户端 key 当上游 key 发出去，让它以 401 明确暴露。
+      delete upstreamHeaders["authorization"];
+      log.warn("codexHandler.codexOAuthUnavailable", { authFile: codexOAuth.authFile });
+    }
+    upstreamHeaders["originator"] = codexOAuth.originator;
+  }
+
+  // ── Strict-param sanitize，仅对 ChatGPT Codex 后端生效 ──────────────────
+  // chatgpt.com/backend-api/codex 是严格参数端点，凡不认的字段一律 400。这类
+  // 裁剪本该由代理负责（客户端无从得知上游脾气），见 sanitizeCodexUpstreamBody。
+  // per-agent 自建上游（upstream.agents.codex.url 指向非 chatgpt.com）不受影响。
+  const isChatGptCodexUpstream =
+    Boolean(config.upstream.codexOAuth?.enabled) || upstreamBase.includes("chatgpt.com");
+  const sanitized = isChatGptCodexUpstream
+    ? sanitizeCodexUpstreamBody(body)
+    : { body, stripped: [] as string[] };
+  if (sanitized.stripped.length > 0) {
+    pipe.info("CODEX_PARAMS", `stripped=[${sanitized.stripped.join(",")}]`);
+  }
+
   pipe.forwardStart(upstreamUrl);
 
   let upstreamResp: Response;
@@ -1101,7 +1259,7 @@ async function forwardToUpstream(
     upstreamResp = await fetch(upstreamUrl, {
       method: "POST",
       headers: upstreamHeaders,
-      body: JSON.stringify(body),
+      body: JSON.stringify(sanitized.body),
     });
   } catch (err: unknown) {
     pipe.error("CODEX_FORWARD", err instanceof Error ? err : new Error(String(err)));

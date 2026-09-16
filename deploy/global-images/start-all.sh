@@ -43,13 +43,16 @@ require_vars \
 # 避免拉起 memory 之后才发现 hub/proxy 端口冲突。（会排除 tdai 自己旧容器）
 check_ports
 
-info "═══ Step 1/3: memory ═══════════════════════════════════════"
+info "═══ Step 0/4: Zen 转发(memory 组 LLM 出口) ═════════════════"
+"$SCRIPT_DIR/start-zen-llm.sh"
+
+info "═══ Step 1/4: memory ═══════════════════════════════════════"
 "$SCRIPT_DIR/start-memory-core.sh"
 
-info "═══ Step 2/3: memory-hub ═══════════════════════════════════"
+info "═══ Step 2/4: memory-hub ═══════════════════════════════════"
 "$SCRIPT_DIR/start-memory-hub.sh"
 
-info "═══ Step 3/3: proxy ════════════════════════════════════════"
+info "═══ Step 3/4: proxy ════════════════════════════════════════"
 # 默认打开完整流水线（auth + sessionInit + tdai 注入）。
 # 用户可用 PROXY_FULL_STACK=0 关闭；也可在 .env 分别覆盖三个开关。
 PROXY_FULL_STACK="${PROXY_FULL_STACK:-1}" "$SCRIPT_DIR/start-proxy.sh"

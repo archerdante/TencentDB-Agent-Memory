@@ -414,6 +414,28 @@ export interface AgentUpstreamEntry {
 }
 
 /** Top-level proxy configuration (merged from config file + CLI args). */
+/**
+ * Codex（ChatGPT 订阅）上游凭据配置。由 `codex-oauth.ts` 消费。
+ *
+ * `authFile` 指向 Codex 客户端自己维护的 `auth.json`（含 access/refresh token 与
+ * account_id）。当该文件以**可写**方式挂进容器时，proxy 在刷新后会原子回写轮换后的
+ * 凭据，使 proxy 与客户端共用同一条刷新链；只读挂载则退化为「仅在内存中刷新」。
+ */
+export interface CodexOAuthConfig {
+  /** 关掉即完全退回既有转发行为。 */
+  enabled: boolean;
+  /** 凭据文件路径（容器内路径）。 */
+  authFile: string;
+  /** OAuth 公开客户端 id（Codex 登录流程使用的那个）。 */
+  clientId: string;
+  /** token 端点。 */
+  tokenUrl: string;
+  /** 提前多少秒视为「将要过期」并触发刷新。 */
+  refreshSkewSeconds: number;
+  /** 上游 `originator` 头取值。 */
+  originator: string;
+}
+
 export interface ProxyConfig {
   server: {
     host: string; // default: "0.0.0.0"
@@ -429,6 +451,15 @@ export interface ProxyConfig {
      * Empty / missing entry → agent falls back to `url` + `apiKey`.
      */
     agents: Record<string, AgentUpstreamEntry>;
+    /**
+     * Codex（ChatGPT 订阅）上游凭据。启用后，本容器自己持有并刷新 OAuth access
+     * token，用它替换转发请求里的 `Authorization`，并补上 ChatGPT Codex 后端要求的
+     * `chatgpt-account-id` 与 `originator` 头。
+     *
+     * 典型用法：`upstream.url` 指向 `https://chatgpt.com/backend-api/codex`。
+     * 未配置时该字段为 undefined，转发行为与既有版本完全一致。
+     */
+    codexOAuth?: CodexOAuthConfig;
   };
   log: {
     file: string;    // JSONL path; empty string disables file logging
@@ -731,6 +762,15 @@ export interface RawYamlConfig {
     apiKey?: string;
     /** Per-agent override map. See `AgentUpstreamEntry`. */
     agents?: Record<string, { url?: string; apiKey?: string } | null | undefined>;
+    /** Codex（ChatGPT 订阅）OAuth 上游。见 `CodexOAuthConfig`。 */
+    codexOAuth?: {
+      enabled?: boolean;
+      authFile?: string;
+      clientId?: string;
+      tokenUrl?: string;
+      refreshSkewSeconds?: number;
+      originator?: string;
+    };
   };
   log?: {
     file?: string;
