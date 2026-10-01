@@ -96,6 +96,15 @@ memory:
     l2DelayAfterL1Seconds: 90
     l2MinIntervalSeconds: 7200
     l2MaxIntervalSeconds: 28800
+    # 2026-10-01 按-task L2 门槛（编码任务单独降级）：指定 task 的新 L1 记录累计到
+    # minRecords 才允许跑一次 L2；不够则整轮延后（cursor 不前移），记录合并进后一次
+    # 更大的 run。L2 的单次成本主要是固定开销（sys prompt + 场景文件 + 2 轮工具循环），
+    # 合并小批量是净收益。maxDeferHours 是安全阀：最老待处理记录超过该时长强制跑一次，
+    # 保证低产 task 不会把自己的 L2 key 饿死。实测近 7 天 45.8% 的 L2 run 只吃 <=5 条记录。
+    l2TaskThrottle:
+      - taskId: task-033p0atop6
+        minRecords: 10
+        maxDeferHours: 24
   recall:
     enabled: true
     maxResults: 5
