@@ -1,0 +1,19 @@
+# Fixture config for the in-container self test (verify.mjs).
+#
+# Mounted read-only at /app/config.yaml so the proxy sources load a real YAML
+# instead of printing "[config] config.yaml not found (cwd=/app)" to stderr -
+# that warning is what made Windows PowerShell treat the verify run as a failed
+# native command.
+#
+# The point of the fixture is the creditReport block: verify.mjs asserts that
+# this file's `enabled: false` survives both the raw YAML load and the
+# buildConfig() merge.
+server:
+  port: 8096
+upstream:
+  url: "http://127.0.0.1:1/never"
+  apiKey: "verify-fixture"
+creditReport:
+  enabled: false
+  url: "http://127.0.0.1:1/never"
+  timeoutMs: 100

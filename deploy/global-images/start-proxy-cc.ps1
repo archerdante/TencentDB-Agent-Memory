@@ -30,7 +30,7 @@
 param(
     [int]$Port = 8100,
     [string]$Container = 'tdai-proxy-cc',
-    [string]$Image = 'agentmemory/memory-proxy:0.2.0-opencode-binding-zensession',
+    [string]$Image = 'agentmemory/memory-proxy:0.2.0-credit-toggle-zensession',
     [string]$Volume = 'tdai-proxy-cc-data'
 )
 
@@ -92,6 +92,16 @@ sessionInit:
     taskHeader: "x-task-id"
 costGuard:
   enabled: false
+
+# 2026-10-09: a self-hosted install has no TokenHub/MemoryPlus billing service,
+# and the built-in creditReport.url default is an unreachable placeholder domain,
+# so every completed request logged
+#   ERROR CREDIT_REPORT [stream] spaceId=default error=fetch failed resp=null
+# Needs image 0.2.0-credit-toggle-zensession to honour this key; older images
+# ignore the unknown key and keep their previous behaviour (no crash).
+creditReport:
+  enabled: false
+
 injection:
   enabled: true
   externalGatewayUrl: "http://127.0.0.1:$Port"

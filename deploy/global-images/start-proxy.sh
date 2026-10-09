@@ -130,6 +130,14 @@ sessionInit:
 costGuard:
   enabled: false
 
+# 2026-10-09: 本地自建部署没有 TokenHub/MemoryPlus 计费服务，creditReport 的内置
+# 默认 url 是占位域名 gateway.example.com:8000，每轮请求只会以 fetch failed 收场并
+# 刷 ERROR CREDIT_REPORT（实测主线 2h 58 条）。显式关闭。
+# 需要镜像 memory-proxy:0.2.0-credit-toggle 才认这个键；旧镜像会忽略未知键，
+# 行为不变、不会崩。
+creditReport:
+  enabled: false
+
 # 打开 skill + knowledge + tdai-memory 三个注入器；
 # knowledge 依赖 memory-hub 起来，否则 hook 内部会降级为空块。
 injection:
