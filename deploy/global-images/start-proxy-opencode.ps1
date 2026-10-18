@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Start the secondary (GPT upstream) proxy container on a separate port.
+    Start the secondary (OpenCode Zen Go upstream) proxy container on a separate port.
 
 .DESCRIPTION
-    Renders .proxy-gpt-config/config.yaml from the OPENCODE_GO_API_KEY in the DSH
+    Renders .proxy-opencode-config/config.yaml from the OPENCODE_GO_API_KEY in the DSH
     credentials file, then (re)creates the container.
 
     ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 as ANSI unless the
@@ -21,20 +21,20 @@
     container is recreated.
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File start-proxy-gpt.ps1
+    powershell -NoProfile -ExecutionPolicy Bypass -File start-proxy-opencode.ps1
 #>
 param(
     [int]$Port = 8097,
-    [string]$Container = 'tdai-proxy-gpt',
+    [string]$Container = 'tdai-proxy-opencode',
     [string]$Image = 'agentmemory/memory-proxy:0.2.0-opencode-binding-zensession',
-    [string]$Volume = 'tdai-proxy-gpt-data'
+    [string]$Volume = 'tdai-proxy-opencode-data'
 )
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $repo = Split-Path -Parent $PSScriptRoot
 $profileCreds = 'C:\Users\jimwpeng\.dsh\.credentials.yaml'
-$configDir = Join-Path $PSScriptRoot '.proxy-gpt-config'
+$configDir = Join-Path $PSScriptRoot '.proxy-opencode-config'
 $configFile = Join-Path $configDir 'config.yaml'
 
 if (-not (Test-Path $profileCreds)) { throw "Missing DSH credentials: $profileCreds" }
@@ -109,7 +109,7 @@ docker rm -f $Container 2>$null | Out-Null
 docker run -d --name $Container `
     --restart unless-stopped `
     --network tdai-memory-stack `
-    --network-alias proxy-gpt `
+    --network-alias proxy-opencode `
     --add-host host.docker.internal:host-gateway `
     -p ("{0}:8096" -f $Port) `
     --mount ("type=bind,source={0},target=/data/config.yaml,readonly" -f $configFile) `
@@ -120,5 +120,5 @@ docker run -d --name $Container `
     $Image | Out-Null
 Start-Sleep -Seconds 8
 $status = docker inspect $Container --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}'
-Write-Host "GPT Proxy $Container $status on http://127.0.0.1:$Port (image=$Image, volume=$Volume)"
-if ($status -notmatch 'running\|healthy') { docker logs --tail 80 $Container; throw 'GPT Proxy did not become healthy' }
+Write-Host "Zen Go Proxy $Container $status on http://127.0.0.1:$Port (image=$Image, volume=$Volume)"
+if ($status -notmatch 'running\|healthy') { docker logs --tail 80 $Container; throw 'Zen Go Proxy did not become healthy' }

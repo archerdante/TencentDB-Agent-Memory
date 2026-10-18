@@ -5,7 +5,7 @@
 .DESCRIPTION
     Renders .proxy-plus-config/config.yaml and (re)creates the container.
 
-    Unlike start-proxy-gpt.ps1 this one needs NO upstream API key: the upstream is
+    Unlike start-proxy-opencode.ps1 this one needs NO upstream API key: the upstream is
     the ChatGPT Codex backend, which authenticates with the OAuth credential the
     Codex client already stored. The container owns that credential:
 

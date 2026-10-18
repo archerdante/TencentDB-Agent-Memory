@@ -22,7 +22,7 @@ fi
 MEMORY_CORE_VOLUME="${MEMORY_CORE_VOLUME:-tdai-memory-core-data}"
 PANEL_VOLUME="${PANEL_VOLUME:-tdai-panel-data}"
 
-for c in tdai-proxy tdai-proxy-gpt tdai-memory-hub tdai-memory-core tdai-zen-llm; do
+for c in tdai-proxy tdai-proxy-opencode tdai-memory-hub tdai-memory-core tdai-zen-llm; do
   if $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
     info "停止并移除 $c"
     $DOCKER rm -f "$c" >/dev/null
