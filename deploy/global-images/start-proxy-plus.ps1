@@ -56,6 +56,17 @@ $PSNativeCommandUseErrorActionPreference = $false
 $configDir = Join-Path $PSScriptRoot '.proxy-plus-config'
 $configFile = Join-Path $configDir 'config.yaml'
 
+# 2026-10-25: L0 extraction fix. DSH / pi-ai responses clients send input items
+# without `type:"message"`, so extractCodexUserText() used to return null and the
+# L0 conversation write was silently skipped (luna memory frozen since 09-15).
+# The fix lives in MemoryProxy/src/agent-adapters/codex.ts and is bind-mounted
+# over the image copy so it survives container recreation. Rebuilding the image
+# would bake it in permanently.
+$codexAdapterPatch = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'MemoryProxy\src\agent-adapters\codex.ts'
+if (-not (Test-Path -LiteralPath $codexAdapterPatch)) {
+    throw "Missing codex adapter patch: $codexAdapterPatch"
+}
+
 # The credential is the Codex client's own auth.json. Fail early and loudly: a
 # missing file would only surface much later as an opaque 401 from the upstream.
 if (-not (Test-Path -LiteralPath $AuthFile)) {
@@ -142,6 +153,7 @@ docker run -d --name $Container `
     -p ("{0}:8096" -f $Port) `
     --mount ("type=bind,source={0},target=/data/config.yaml,readonly" -f $configFile) `
     --mount ("type=bind,source={0},target=/data/codex-auth.json" -f $AuthFile) `
+    --mount ("type=bind,source={0},target=/app/src/agent-adapters/codex.ts,readonly" -f $codexAdapterPatch) `
     -v ("{0}:/data/tdai-memory-proxy" -f $Volume) `
     -e NODE_ENV=production `
     -e PROXY_DB_PATH=/data/tdai-memory-proxy/proxy.db `

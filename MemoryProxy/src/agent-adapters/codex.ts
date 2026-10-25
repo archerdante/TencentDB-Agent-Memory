@@ -85,7 +85,13 @@ function extractCodexUserText(input: unknown): string | null {
   for (let i = input.length - 1; i >= 0; i--) {
     const item = input[i] as Record<string, unknown> | null | undefined;
     if (!item || typeof item !== "object") continue;
-    if (item.type !== "message" || item.role !== "user") continue;
+    // 2026-10-25 fix: DSH / pi-ai 的 openai-responses 客户端**不发** `type:"message"`,
+    // input item 只有 {role, content}。旧代码严格判 type==="message" 会把这类请求
+    // 全部漏掉 → extractCodexUserText 返回 null → L0 不落库(luna 记忆自 09-15 冻结)。
+    // 语义不变: 仍是"最后一条 role=user 的 message 项", 只是允许 type 缺省。
+    const itemType = item.type;
+    if (itemType !== undefined && itemType !== "message") continue;
+    if (item.role !== "user") continue;
 
     const content = item.content;
     if (!Array.isArray(content)) continue;
