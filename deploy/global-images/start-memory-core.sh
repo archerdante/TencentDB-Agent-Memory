@@ -103,7 +103,9 @@ memory:
     # 保证低产 task 不会把自己的 L2 key 饿死。实测近 7 天 45.8% 的 L2 run 只吃 <=5 条记录。
     l2TaskThrottle:
       - taskId: task-033p0atop6
-        minRecords: 10
+        # 2026-10-27 实测：写入节奏是每轮 1~2 条，minRecords=10 导致 2 天 190 次
+        # "Deferred by task throttle" 空转（L2 真实 run 仅 17 次）。降到 4。
+        minRecords: 4
         maxDeferHours: 24
   recall:
     enabled: true
@@ -150,6 +152,22 @@ if command -v cygpath >/dev/null 2>&1; then
 else
   CORE_CONFIG_MOUNT="$CORE_CONFIG_FILE"
 fi
+# 2026-10-27 热修：L0 写入侧过滤 harness 系统噪声（"Time sampled while preparing turn…"、
+# "background job …"）并对 120s 内的重复文本去重。镜像内该文件是 8 月快照，故用 bind
+# mount 覆盖单个文件，避免整镜像重建；删除 .memory-core-hotfix/sqlite.ts 即回滚。
+CORE_HOTFIX_FILE="$SCRIPT_DIR/.memory-core-hotfix/sqlite.ts"
+if [[ -f "$CORE_HOTFIX_FILE" ]]; then
+  if command -v cygpath >/dev/null 2>&1; then
+    CORE_HOTFIX_MOUNT=$(cygpath -w "$CORE_HOTFIX_FILE")
+  else
+    CORE_HOTFIX_MOUNT="$CORE_HOTFIX_FILE"
+  fi
+  CORE_HOTFIX_ARGS=(--mount "type=bind,source=${CORE_HOTFIX_MOUNT},target=/app/src/core/store/sqlite.ts,readonly")
+  info "L0 ingest guard 热修已挂载 → $CORE_HOTFIX_FILE"
+else
+  CORE_HOTFIX_ARGS=()
+  warn "未找到 .memory-core-hotfix/sqlite.ts，按原镜像运行（无 L0 噪声过滤/去重）"
+fi
 MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
   --restart unless-stopped \
   --network "$NETWORK" \
@@ -157,12 +175,14 @@ MSYS_NO_PATHCONV=1 $DOCKER run -d --name "$CONTAINER" \
   -p "${MEMORY_CORE_PORT}:8420" \
   -v "${MEMORY_CORE_VOLUME}:/data/tdai-memory" \
   --mount "type=bind,source=${CORE_CONFIG_MOUNT},target=/data/config/tdai-gateway.yaml,readonly" \
+  "${CORE_HOTFIX_ARGS[@]}" \
   -e TDAI_GATEWAY_PORT=8420 \
   -e TDAI_GATEWAY_HOST=0.0.0.0 \
   -e TDAI_GATEWAY_API_KEY="$MEMORY_CORE_GATEWAY_API_KEY" \
   -e TDAI_DATA_DIR=/data/tdai-memory \
   -e TDAI_GATEWAY_CONFIG=/data/config/tdai-gateway.yaml \
   -e NODE_OPTIONS=--max-old-space-size=1536 \
+  -e MEMORY_MAX_BODY_BYTES="${MEMORY_MAX_BODY_BYTES:-8388608}" \
   "$MEMORY_CORE_IMAGE" >/dev/null
 
 wait_healthy "$CONTAINER" 90
