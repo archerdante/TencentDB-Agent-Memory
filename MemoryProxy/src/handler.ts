@@ -687,11 +687,23 @@ export async function handleChatCompletions(
   }
 
   // ── Session key: prefer conversation header, fallback to agent profile ───────────
-  const { resolveConversationId, deriveOpenCodeConversationId } = await import("./session/session-key.js");
+  const { resolveConversationId, deriveOpenCodeConversationId, deriveDshConversationId } = await import("./session/session-key.js");
   const requestConversationId = resolveConversationId(c);
   const profileSessionKey = requestConversationId ?? resolveSessionKey(config, lcHeaders, c.req.path, body, keyId);
+  // DSH web / pi-ai providers do not send x-deepseek-harness-session-id, and the
+  // agent-profile session key is constant per API key — so without a derived key
+  // every chat of one user collapses into one memory session and can reuse another
+  // agent's identity binding. Derive a deterministic per-chat key from the first
+  // user message (DSH replays full history, so it stays stable within a chat).
+  const dshDerivedKey = requestConversationId || agentSource !== "dsh"
+    ? null
+    : deriveDshConversationId(
+        Array.isArray(body.messages) ? body.messages : [],
+        c.req.path,
+        profileSessionKey,
+      );
   const sessionKey = requestConversationId || agentSource !== "opencode"
-    ? profileSessionKey
+    ? (dshDerivedKey ?? profileSessionKey)
     : deriveOpenCodeConversationId(
         Array.isArray(body.messages) ? body.messages : [],
         c.req.path,
@@ -702,7 +714,11 @@ export async function handleChatCompletions(
   // the same deterministic fallback key for session-init when no header exists.
   // This makes the first request enter the Team → Agent → Task flow while
   // preserving the existing explicit-header behavior for every other client.
-  const conversationId = requestConversationId ?? (agentSource === "opencode" ? sessionKey : null);
+  // DSH gets the same treatment: without a conversationId, session-init / L0
+  // writes are skipped entirely.
+  const conversationId = requestConversationId ?? (agentSource === "opencode"
+    ? sessionKey
+    : dshDerivedKey ?? null);
 
   // ── Auth verification (user_key → user_id) ──────────────────────────────────────
   // Reuse the early verify result — it ran before body parse to decide the

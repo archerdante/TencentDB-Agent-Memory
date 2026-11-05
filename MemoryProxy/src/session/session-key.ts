@@ -29,10 +29,11 @@ export function resolveConversationId(c: Context): string | null {
  * message on each tool-loop request. Hashing that message keeps one CLI
  * conversation together without putting user content into storage keys.
  */
-export function deriveOpenCodeConversationId(
+export function deriveConversationIdFromFirstUser(
   messages: unknown[],
   requestPath: string,
   fallback: string,
+  prefix: string,
 ): string {
   const firstUser = messages.find((message) => {
     const role = (message as Record<string, unknown>)?.role;
@@ -47,7 +48,29 @@ export function deriveOpenCodeConversationId(
     .update(`${requestPath}\n${seed}`)
     .digest("hex")
     .slice(0, 32);
-  return `opencode-${digest}`;
+  return `${prefix}-${digest}`;
+}
+
+export function deriveOpenCodeConversationId(
+  messages: unknown[],
+  requestPath: string,
+  fallback: string,
+): string {
+  return deriveConversationIdFromFirstUser(messages, requestPath, fallback, "opencode");
+}
+
+/**
+ * Derive a stable conversation ID for DSH (deepseek-harness) requests that do
+ * not carry `x-deepseek-harness-session-id` (the web GUI / pi-ai providers do
+ * not emit it). DSH replays the full message history on every turn, so hashing
+ * the first user message keeps one chat together, mirroring the OpenCode path.
+ */
+export function deriveDshConversationId(
+  messages: unknown[],
+  requestPath: string,
+  fallback: string,
+): string {
+  return deriveConversationIdFromFirstUser(messages, requestPath, fallback, "dsh");
 }
 
 /** Check whether the messages look like a fresh conversation (at most 1 user message, no assistant/tool). */
