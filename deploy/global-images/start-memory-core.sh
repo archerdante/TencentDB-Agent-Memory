@@ -89,10 +89,11 @@ memory:
     maxScenes: 8
   pipeline:
     # 2026-09-10 二轮降耗：5 → 10（L1 已是调用次数最多的路径，实测约 40 次/小时）
-    everyNConversations: 10
+    everyNConversations: 5
     enableWarmup: true
     # 2026-09-10 二轮降耗：600 → 1800（批量抽取摊薄固定 sys prompt 2369 chars）
-    l1IdleTimeoutSeconds: 1800
+    # 2026-11-23 回调：1800s 让短会话永远等不到抽取；600s 与 09-10 前的实测节奏一致。
+    l1IdleTimeoutSeconds: 600
     l2DelayAfterL1Seconds: 90
     l2MinIntervalSeconds: 7200
     l2MaxIntervalSeconds: 28800
@@ -128,12 +129,15 @@ skill:
     enabled: true
     # 2026-09-10 降耗：16 → 4（实测有跑满 16 步的 skill 抽取，单次 30+ 次上下文重发）
     # 2026-09-10 二轮降耗：4 → 2
-    maxIterations: 2
+    # 2026-11-23：2 步根本读不完会话，产出为 0；回到 6 作为「成本可解释、又能真抽出东西」的折中。
+    maxIterations: 6
     # 归档触发阈值抬高一档（默认 10 次 tool_call / 40KB 太容易触发）
     # 2026-09-10 二轮降耗：50 → 100
-    toolCallThreshold: 100
+    # 2026-11-23：实测历史 tool_call_count 峰值就是 99，阈值 100 等于永不触发；降到 40。
+    toolCallThreshold: 40
     # 2026-09-10 二轮降耗：204800 → 512000
-    archiveBytes: 512000
+    # 2026-11-23：512KB 高于实测峰值 437KB（同样永不触发）；降到 128KB，实测有 203 个会话已过线。
+    archiveBytes: 128000
     queue:
       backend: local
       keyPrefix: tdai
